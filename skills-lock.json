@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "go-cli-tui": {
+      "source": "daviddwlee84/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/owned/go-cli-tui/SKILL.md",
+      "ref": "2917213e7a021f136f1d5a616f697f7c7aae9d35"
+    }
+  }
+}
