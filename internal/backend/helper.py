@@ -97,10 +97,19 @@ def sources():
     with contextlib.suppress(Exception):
         from smartcard.System import readers
 
-        seen = {str(d.fingerprint) for d, _ in devices}
+        # Match the SDK's PC/SC fingerprint to the actual reader name. Keep
+        # this exact identity so a reader placeholder can become its key in UI.
+        by_reader = {
+            str(d.fingerprint): entry
+            for (d, info), entry in zip(
+                [(d, i) for d, i in devices if i.serial is not None], result
+            )
+        }
         for reader in readers():
             name = str(reader)
-            if "yubi" in name.lower() and name not in seen:
+            if name in by_reader:
+                by_reader[name]["reader_ids"] = ["reader:" + name]
+            elif "yubi" in name.lower():
                 result.append(
                     {
                         "id": "reader:" + name,

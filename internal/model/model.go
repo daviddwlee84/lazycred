@@ -42,12 +42,13 @@ func (f *Field) UnmarshalJSON(data []byte) error {
 }
 
 type Source struct {
-	ID      string  `json:"id"`
-	Kind    string  `json:"kind"`
-	Name    string  `json:"name"`
-	State   string  `json:"state"`
-	Summary string  `json:"summary,omitempty"`
-	Fields  []Field `json:"fields,omitempty"`
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Name      string   `json:"name"`
+	State     string   `json:"state"`
+	Summary   string   `json:"summary,omitempty"`
+	ReaderIDs []string `json:"reader_ids,omitempty"`
+	Fields    []Field  `json:"fields,omitempty"`
 }
 type Item struct {
 	ID       string  `json:"id"`

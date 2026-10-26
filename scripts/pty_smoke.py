@@ -2,7 +2,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pyte==0.8.2"]
 # ///
-"""Real PTY interaction checks using --demo and isolated preferences only."""
+"""Real PTY checks using demo/fake backends and isolated preferences only."""
 
 import codecs
 import fcntl
@@ -23,7 +23,7 @@ import pyte
 
 
 class Terminal:
-    def __init__(self, executable, directory, columns=140, rows=36):
+    def __init__(self, executable, directory, columns=140, rows=36, arguments=None):
         self.master, self.slave = pty.openpty()
         self.before = termios.tcgetattr(self.slave)
         self.screen = pyte.Screen(columns, rows)
@@ -40,7 +40,12 @@ class Terminal:
         )
         environment.pop("BW_SESSION", None)
         self.process = subprocess.Popen(
-            [str(executable), "--demo", "--source", "bitwarden"],
+            [str(executable)]
+            + (
+                arguments
+                if arguments is not None
+                else ["--demo", "--source", "bitwarden"]
+            ),
             stdin=self.slave,
             stdout=self.slave,
             stderr=self.slave,
@@ -172,11 +177,87 @@ def main():
         if not restored:
             raise AssertionError("terminal modes were not restored")
         checks.append("terminal echo and input modes restored")
+        check_reader_recovery(executable, Path(directory), checks)
         print(
             json.dumps(
                 {"pty_checks": checks, "real_resources_accessed": False}, indent=2
             )
         )
+
+
+def check_reader_recovery(executable, directory, checks):
+    """Exercise the real refresh key through a fake native helper boundary."""
+    marker = directory / "card-present"
+    fake_uv = directory / "fake-uv"
+    fake_uv.write_text(
+        "#!"
+        + sys.executable
+        + "\n"
+        + "import json,sys\nfrom pathlib import Path\n"
+        + "if sys.argv[1] == 'sync': raise SystemExit(0)\n"
+        + "request=json.load(sys.stdin)\n"
+        + "reader='reader:Yubico Demo CCID 0'\n"
+        + "key={'id':'yubikey:11111111','kind':'yubikey','name':'Recovered demo key','state':'ready','reader_ids':[reader]}\n"
+        + "if request['op'] == 'sources':\n"
+        + " result=[key] if Path("
+        + repr(str(marker))
+        + ").exists() else [{'id':reader,'kind':'reader','name':'Yubico Demo CCID 0','state':'unavailable'}]\n"
+        + "elif request['op'] == 'items' and request.get('category') == 'status':\n"
+        + " result=[{'id':'device','name':'Device recovered','kind':'status','fields':[{'id':'firmware','label':'Firmware','value':'4.4.5'}]}]\n"
+        + "elif request['op'] == 'items' and request.get('category') == 'oath': result=[]\n"
+        + "else: raise SystemExit('Unexpected operation in read-only fake')\n"
+        + "print(json.dumps({'ok':True,'result':result}))\n"
+    )
+    fake_uv.chmod(0o700)
+    fake_bw = directory / "fake-bw"
+    fake_bw.write_text("#!/bin/sh\nexit 1\n")
+    fake_bw.chmod(0o700)
+    arguments = ["--uv", str(fake_uv), "--bw", str(fake_bw)]
+    environment = dict(
+        os.environ,
+        XDG_CONFIG_HOME=str(directory / "config"),
+        XDG_CACHE_HOME=str(directory / "cache"),
+    )
+    environment.pop("BW_SESSION", None)
+    subprocess.run(
+        [str(executable), *arguments, "setup", "yubikey"],
+        env=environment,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    )
+    terminal = Terminal(executable, directory, arguments=arguments)
+    try:
+        terminal.expect("Yubico Demo CCID 0")
+        terminal.send(b"s")
+        terminal.send(b"jj\r")
+        terminal.expect("Reader is visible but card")
+        marker.write_text("present")
+        terminal.send(b"r")
+        terminal.expect("Recovered demo key")
+        terminal.expect("Device recovered")
+        terminal.expect("Firmware")
+        terminal.expect("4.4.5")
+        if "Reader is visible but card" in terminal.text():
+            raise AssertionError("reader error survived successful refresh")
+        checks.append(
+            "touch-eject reader recovers to exact key after r, without restart"
+        )
+        terminal.send(b"c")
+        terminal.send(b"j\r")
+        terminal.expect("No OATH accounts.")
+        terminal.send(b"a")
+        terminal.expect("Account label")
+        terminal.send(b"\x1b")
+        checks.append("empty OATH category offers Add TOTP without a write")
+        terminal.send(b"q")
+        terminal.process.wait(timeout=5)
+        if terminal.process.returncode != 0:
+            raise AssertionError("reader recovery quit failed")
+    finally:
+        restored = terminal.close()
+    if not restored:
+        raise AssertionError("recovery scenario did not restore terminal modes")
 
 
 if __name__ == "__main__":

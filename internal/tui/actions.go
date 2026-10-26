@@ -130,7 +130,7 @@ func (m *Model) activate(id string) tea.Cmd {
 				return jobMsg{Message: "Bitwarden synchronized; refreshing metadata.", Err: err}
 			})
 		}
-		return tea.Batch(m.discovery(), m.load())
+		return m.discovery()
 	case "add":
 		m.form("oath-add", "Add TOTP · source seed is not backed up by the device", []inputField{newField("name", "Account label", false), newField("secret", "Base32 TOTP seed or otpauth URI", true), newField("current", "Current OATH password (empty if unset)", true), newField("confirm", "Confirm destination: type full serial", false)})
 		return nil

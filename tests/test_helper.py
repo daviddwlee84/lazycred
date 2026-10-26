@@ -5,7 +5,7 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from yubikit.management import CAPABILITY
 from yubikit.oath import OATH_TYPE
@@ -105,6 +105,34 @@ class HelperTests(unittest.TestCase):
             with self.assertRaises(bridge.Failure) as caught:
                 bridge.get_code({"serial": "11111111", "id": b"test".hex()})
         self.assertEqual(caught.exception.code, "confirm_required")
+
+    def test_discovery_associates_readable_key_with_exact_reader(self):
+        name = "Yubico Demo CCID 0"
+        reader = MagicMock()
+        reader.__str__.return_value = name
+        device = SimpleNamespace(fingerprint=name)
+        info = SimpleNamespace(serial=11111111)
+        entry = {"id": "yubikey:11111111", "kind": "yubikey"}
+        with (
+            patch("ykman.device.list_all_devices", return_value=[(device, info)]),
+            patch.object(bridge, "source", return_value=entry),
+            patch("smartcard.System.readers", return_value=[reader]),
+        ):
+            rows = bridge.sources()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["reader_ids"], ["reader:" + name])
+
+    def test_ejected_reader_remains_visible_without_a_guessed_serial(self):
+        reader = MagicMock()
+        reader.__str__.return_value = "Yubico Demo CCID 0"
+        with (
+            patch("ykman.device.list_all_devices", return_value=[]),
+            patch("smartcard.System.readers", return_value=[reader]),
+        ):
+            rows = bridge.sources()
+        self.assertEqual(rows[0]["kind"], "reader")
+        self.assertEqual(rows[0]["state"], "unavailable")
+        self.assertNotIn("serial", rows[0])
 
 
 if __name__ == "__main__":

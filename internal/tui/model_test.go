@@ -180,3 +180,99 @@ func TestReadOnlyActionsDoNotAdvertiseWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestRefreshRecoversExactReaderWithoutRestart(t *testing.T) {
+	m := demo(t)
+	reader := model.Source{ID: "reader:Yubico Demo CCID 0", Kind: "reader", Name: "Demo reader", State: "unavailable"}
+	m.sources = []model.Source{{ID: "overview", Kind: "overview"}, reader}
+	m.sourceID, m.category = reader.ID, "status"
+	m.pane().Error = "Reader unavailable"
+	oldGeneration := m.generations[m.key()]
+	command := m.activate("refresh")
+	if command == nil {
+		t.Fatal("refresh did not discover sources")
+	}
+	// A read that started before refresh must not overwrite the recovery.
+	m.Update(itemsMsg{Key: m.key(), Generation: oldGeneration, Epoch: m.app.Epoch(), Err: model.Fail("unavailable", "late reader failure")})
+	if m.pane().Error == "late reader failure" {
+		t.Fatal("old error survived refresh")
+	}
+	key := model.Source{ID: "yubikey:22222222", Kind: "yubikey", Name: "Recovered key", State: "ready", ReaderIDs: []string{reader.ID}}
+	unrelated := model.Source{ID: "yubikey:11111111", Kind: "yubikey", Name: "Other key", State: "ready"}
+	_, read := m.Update(sourcesMsg{Generation: m.sourcesGeneration, Rows: []model.Source{{ID: "overview", Kind: "overview"}, unrelated, key}})
+	if m.sourceID != key.ID || m.category != "status" || read == nil {
+		t.Fatal("refresh did not follow the exact reader to its key")
+	}
+	items := read().(itemsMsg)
+	_, detail := m.Update(items)
+	if detail == nil {
+		t.Fatal("recovery did not load details")
+	}
+	m.Update(detail())
+	if m.detail.ID == "" || m.detail.Source != key.ID || m.pane().Error != "" {
+		t.Fatal("recovered details were not displayed")
+	}
+}
+
+func TestRefreshNeverGuessesReplacementKey(t *testing.T) {
+	m := demo(t)
+	reader := model.Source{ID: "reader:Yubico Demo CCID 0", Kind: "reader"}
+	m.sources = []model.Source{{ID: "overview", Kind: "overview"}, reader}
+	m.sourceID = reader.ID
+	m.discovery()
+	m.Update(sourcesMsg{Generation: m.sourcesGeneration, Rows: []model.Source{{ID: "overview", Kind: "overview"}, {ID: "yubikey:11111111", Kind: "yubikey"}}})
+	if m.sourceID != "overview" {
+		t.Fatal("unassociated key selected automatically")
+	}
+}
+
+func TestRefreshKeepsCategoryAndSelectionForSameKey(t *testing.T) {
+	m := demo(t)
+	m.sourceID, m.category = "yubikey:11111111", "oath"
+	rows, _ := m.app.Items(context.Background(), m.sourceID, m.category)
+	m.pane().Rows, m.pane().Selected, m.pane().Query = rows, itemKey(rows[0]), "Example"
+	m.discovery()
+	_, read := m.Update(sourcesMsg{Generation: m.sourcesGeneration, Rows: m.sources})
+	m.Update(read())
+	if m.category != "oath" || m.pane().Query != "Example" || m.pane().Selected != itemKey(rows[0]) {
+		t.Fatal("refresh lost per-key browsing context")
+	}
+}
+
+func TestEjectedKeyReturnsToItsReader(t *testing.T) {
+	m := demo(t)
+	readerID := "reader:Yubico Demo CCID 0"
+	key := model.Source{ID: "yubikey:11111111", Kind: "yubikey", ReaderIDs: []string{readerID}}
+	m.sources, m.sourceID, m.category = []model.Source{key}, key.ID, "oath"
+	m.discovery()
+	m.Update(sourcesMsg{Generation: m.sourcesGeneration, Rows: []model.Source{{ID: "overview", Kind: "overview"}, {ID: readerID, Kind: "reader", State: "unavailable"}}})
+	if m.sourceID != readerID || m.category != "status" {
+		t.Fatal("ejected key lost its reader context")
+	}
+}
+
+func TestFrameUsesOuterDimensionsWithoutWrappingSourceRows(t *testing.T) {
+	view := frame("Sources", "› A very long fictional reader name\n  Bitwarden", 26, 10, true)
+	lines := strings.Split(ansi.Strip(view), "\n")
+	if len(lines) != 10 {
+		t.Fatalf("frame height = %d", len(lines))
+	}
+	for _, line := range lines {
+		if ansi.StringWidth(line) != 26 {
+			t.Fatalf("frame width = %d", ansi.StringWidth(line))
+		}
+	}
+	if !strings.Contains(lines[3], "Bitwarden") {
+		t.Fatal("long source name wrapped into the next row")
+	}
+}
+
+func TestUnavailableReaderDoesNotOfferUnlock(t *testing.T) {
+	m := demo(t)
+	m.sources = []model.Source{{ID: "reader:Demo", Kind: "reader"}}
+	m.sourceID = "reader:Demo"
+	m.pane().Error = "Reader unavailable"
+	if strings.Contains(m.itemView(), "u Unlock") {
+		t.Fatal("reader error offered a PIN action")
+	}
+}

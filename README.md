@@ -10,7 +10,7 @@ to own their keys, vaults and cryptographic operations.
 需要 Go **1.26+**，首版支援 macOS／Linux：
 
 ```sh
-go install github.com/daviddwlee84/lazycred/cmd/lazycred@v0.1.0
+go install github.com/daviddwlee84/lazycred/cmd/lazycred@v0.1.1
 lazycred --version
 lazycred --demo                 # 假資料；不讀裝置、vault 或系統剪貼簿
 lazycred
@@ -81,6 +81,24 @@ lazycred setup yubikey
 Overview 區分硬體支援、介面啟用、FIPS capability／approved state、鎖定及未知狀態。
 FIDO 只列 discoverable credentials，不是歷來所有網站綁定清單。公開憑證存在也不能
 證明相符私鑰仍可用；舊裝置查不到 metadata 時保留 unknown。
+
+### 觸摸後刷新與第一次新增
+
+查核日期：2026-10-27。
+
+CCID reader 可見、card unavailable 時，輕碰一次後按 `r`；會重新掃描並依確切 reader
+對應切到同一把可讀金鑰，載入狀態與詳細資料，不需重開 TUI。沒有可靠對應時回到
+Overview，請用 `s` 選來源；不會因為只看到一把金鑰就猜選它。
+
+`status` 的列數是裝置／應用狀態列數，不是已存帳號數。按 `c` 選 `oath` 才會列出
+OTP 帳號；成功讀到空清單時可按 `a` 新增 TOTP。輸入帳號名稱、seed／otpauth URI、
+既有 OATH 密碼（未設定才留空）及完整目標序號，最後 review／Apply 才會寫入。
+新增前獨立保管 seed 或復原方式；硬體不提供 seed 匯出。
+
+PIV 的候選 slots 不代表全部為空或可用。公開憑證、私鑰與應用啟用狀態分開判讀；
+本工具不以 status、unknown 或過期憑證作為覆寫許可。
+參考 [YubiKey Manager](https://developers.yubico.com/yubikey-manager/) 與
+[YubiKey FIPS 4 OATH 說明](https://docs.yubico.com/hardware/yubikey/yk-fips-4/fips4-deploy.html#oath)。
 
 ## 範圍
 

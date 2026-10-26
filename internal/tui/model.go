@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -158,6 +159,15 @@ func (m *Model) selected() (model.Item, bool) {
 }
 func (m *Model) discovery() tea.Cmd {
 	m.sourcesGeneration++
+	// Discovery decides which source still exists before its items are read.
+	// Supersede earlier reads immediately, including late unavailable errors.
+	m.generations[m.key()]++
+	m.pane().Loading = true
+	m.detailGeneration++
+	m.detail = model.Item{}
+	m.revealedID, m.revealedValue = "", ""
+	m.updateViewport()
+	m.status = "Refreshing local sources…"
 	generation := m.sourcesGeneration
 	ctx, app := m.ctx, m.app
 	return func() tea.Msg { rows, err := app.Sources(ctx); return sourcesMsg{generation, rows, err} }
@@ -294,9 +304,11 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.Err != nil {
+			m.pane().Loading = false
 			m.status = msg.Err.Error()
 			return m, nil
 		}
+		previous := m.source()
 		m.sources = msg.Rows
 		found := false
 		for _, s := range m.sources {
@@ -305,8 +317,28 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if !found && len(m.sources) > 0 {
-			m.sourceID = m.sources[0].ID
+			// A reader has no serial while its card is ejected. Follow only an
+			// exact SDK reader association; never guess from row order or the
+			// number of keys attached.
+			next := ""
+			for _, s := range m.sources {
+				match := previous.Kind == "reader" && s.Kind == "yubikey" && slices.Contains(s.ReaderIDs, previous.ID)
+				match = match || (previous.Kind == "yubikey" && s.Kind == "reader" && slices.Contains(previous.ReaderIDs, s.ID))
+				if match {
+					if next != "" {
+						next = ""
+						break
+					}
+					next = s.ID
+				}
+			}
+			if next == "" {
+				next = m.sources[0].ID
+			}
+			m.sourceID = next
 			m.category = "status"
+			m.filter.SetValue(m.pane().Query)
+			m.filtering = false
 		}
 		m.status = "Local sources discovered · refresh explicitly to reconcile external changes"
 		return m, m.load()
@@ -399,10 +431,10 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.modal = &dialog{Kind: "result", Title: "Operation result", Text: text}
 		}
 		if msg.Kind == "unlock" && msg.Err == nil {
-			return m, tea.Batch(m.discovery(), m.load())
+			return m, m.discovery()
 		}
 		if msg.Kind == "manage" || msg.Kind == "transfer" || msg.Kind == "refresh" || msg.Kind == "setup" {
-			return m, tea.Batch(m.discovery(), m.load())
+			return m, m.discovery()
 		}
 		return m, nil
 	case tea.MouseMsg:

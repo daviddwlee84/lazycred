@@ -53,7 +53,7 @@ func frame(title, body string, width, height int, focused bool) string {
 		border = lipgloss.Color("#5EEAD4")
 	}
 	content := accent.Render(crop(title, max(1, width-4))) + "\n" + linesFit(body, max(1, width-4), max(1, height-3))
-	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1).Width(max(1, width-2)).Height(max(1, height-2)).Render(content)
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).Padding(0, 1).Width(max(1, width)).Height(max(1, height)).Render(content)
 }
 func (m *Model) listOffset() int {
 	rows := m.filtered()
@@ -101,10 +101,19 @@ func (m *Model) itemView() string {
 			return muted.Render("Loading…\nNavigation remains available.")
 		}
 		if p.Error != "" {
-			return danger.Render(ansi.Wrap(model.Safe(p.Error), max(10, m.layout().items-5), "")) + "\n\nu Unlock · S Setup · r Retry"
+			var hints []string
+			for _, a := range m.actions() {
+				if a.Enabled && (a.ID == "unlock" || a.ID == "setup" || a.ID == "refresh") {
+					hints = append(hints, a.Key+" "+a.Label)
+				}
+			}
+			return danger.Render(ansi.Wrap(model.Safe(p.Error), max(10, m.layout().items-5), "")) + "\n\n" + strings.Join(hints, " · ")
 		}
 		if p.Query != "" {
 			return "No matching items.\nEsc from filter clears the query."
+		}
+		if m.source().Kind == "yubikey" && m.category == "oath" && !m.app.ReadOnly {
+			return "No OATH accounts.\na Add TOTP · c Category · : Actions"
 		}
 		return "No items in this category.\nc Choose category · : Actions"
 	}
@@ -170,7 +179,7 @@ func (m *Model) footer() string {
 			continue
 		}
 		switch a.ID {
-		case "copy", "actions", "help", "refresh", "unlock", "category":
+		case "copy", "actions", "help", "refresh", "unlock", "category", "add":
 			hints = append(hints, a.Key+" "+a.Label)
 		}
 	}
